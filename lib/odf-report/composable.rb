@@ -12,6 +12,11 @@ module ODFReport
       images << Image.new({name: name, value: value}, &block)
     end
 
+    def add_inline_image(name, value = nil, width: nil, height: nil, dpi: nil, anchor: nil, style: nil, &block)
+      images << InlineImage.new({name: name, value: value, width: width, height: height,
+                                 dpi: dpi, anchor: anchor, style: style}, &block)
+    end
+
     def add_table(table_name, collection, opts = {})
       opts[:name] = table_name
       opts[:value] = collection
