@@ -36,6 +36,8 @@ module ODFReport
       fields.each { |c| c.replace!(doc) }
 
       images.each { |c| c.replace!(doc) }
+
+      tables_from_data.each { |c| c.replace!(doc) }
     end
 
     def include_images(file)

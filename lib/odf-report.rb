@@ -5,6 +5,8 @@ require "nokogiri"
 require "mime/types"
 require "securerandom"
 
+require File.expand_path('../odf-report/style', __FILE__)
+
 require File.expand_path("../odf-report/parser/default", __FILE__)
 
 require File.expand_path("../odf-report/configuration", __FILE__)
@@ -20,4 +22,5 @@ require File.expand_path("../odf-report/composable", __FILE__)
 require File.expand_path("../odf-report/nestable", __FILE__)
 require File.expand_path("../odf-report/section", __FILE__)
 require File.expand_path("../odf-report/table", __FILE__)
+require File.expand_path("../odf-report/table_from_data", __FILE__)
 require File.expand_path("../odf-report/report", __FILE__)
