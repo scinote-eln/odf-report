@@ -31,6 +31,13 @@ module ODFReport
       yield(tab)
     end
 
+    def add_table_from_data(name, collection, opts = {})
+      opts[:name] = name
+      opts[:value] = collection
+
+      tables_from_data << TableFromData.new(opts)
+    end
+
     def add_section(section_name, collection, opts = {})
       opts[:name] = section_name
       opts[:value] = collection
@@ -56,5 +63,7 @@ module ODFReport
     def sections = @sections ||= []
 
     def images = @images ||= []
+
+    def tables_from_data = @tables_from_data ||= []
   end
 end
