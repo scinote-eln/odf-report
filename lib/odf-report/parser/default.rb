@@ -6,7 +6,8 @@ module ODFReport
     #   - <p>, <h1>..<h6>                -> paragraphs (headings use "title")
     #   - <blockquote>                   -> paragraphs use the "quote" style
     #   - <ul>, <ol>, <li>               -> ODF lists (text:list / text:list-item),
-    #                                       including nested lists
+    #                                       including nested lists, with proper
+    #                                       bullet or numbered list styling
     #   - <strong>/<b>, <em>/<i>, <u>    -> styled text:span
     #   - <br>                           -> text:line-break
     #
@@ -19,12 +20,11 @@ module ODFReport
       attr_reader :paragraphs
 
       LIST_TAGS = %w[ul ol].freeze
-
-      STYLE_TAGS = {
-        "strong" => "bold",  "b" => "bold",
-        "em"     => "italic", "i" => "italic",
-        "u"      => "underline", "ins" => "underline"
-      }.freeze
+      HEADING_TAGS = %w[h1 h2 h3 h4 h5 h6].freeze
+      BLOCK_LEVEL_CSS_KEYS = %w[
+        text-align margin-left margin-right padding-left padding-right
+        margin-top margin-bottom padding-top padding-bottom
+      ].freeze
 
       SEMANTIC_STYLES = {
         'strong' => { 'font-weight' => 'bold' },
@@ -78,7 +78,7 @@ module ODFReport
           case node.name
           when "p"
             add_paragraph(node)
-          when "h1", "h2", "h3", "h4", "h5", "h6"
+          when *HEADING_TAGS
             add_paragraph(node, 'title')
           when "ul", "ol"
             @paragraphs << build_list(node)
@@ -97,11 +97,19 @@ module ODFReport
       end
 
       def add_paragraph(node, style = nil)
+        @paragraphs << build_paragraph(node, style)
+      end
+
+      def build_paragraph(node, style = nil)
         paragraph = xml(TEXT_P)
-        paragraph[TEXT_STYLE_NAME] = style if style
+
+        css = node['style'] ? @style.parse_css(node['style']) : {}
+        style_name = style || (css.empty? ? nil : @style.text_style(css, 'paragraph'))
+        paragraph[TEXT_STYLE_NAME] = style_name if style_name
+
         render_inline(node, paragraph)
 
-        @paragraphs << paragraph
+        paragraph
       end
 
       def render_inline(node, parent, css = {})
@@ -130,14 +138,18 @@ module ODFReport
         return if text.nil? || text.empty?
 
         span = xml(TEXT_SPAN)
-        style = css.empty? ? nil : @style.text_style(css, 'text')
+        span_css = css.reject { |key, _| BLOCK_LEVEL_CSS_KEYS.include?(key) }
+        style = span_css.empty? ? nil : @style.text_style(span_css, 'text')
         span[TEXT_STYLE_NAME] = style if style
         span.content = text.delete("\n")
         parent.add_child(span)
       end
 
       def build_list(node)
+        ordered = node.name == 'ol'
+
         list = xml(TEXT_LIST)
+        list[TEXT_STYLE_NAME] = @style.list_style(ordered)
 
         node.children
             .select { |child| child.name == 'li' }
@@ -153,7 +165,17 @@ module ODFReport
         paragraph = xml(TEXT_P)
 
         li.children.each do |child|
-          if LIST_TAGS.include?(child.name)
+          next if block_whitespace?(child)
+
+          if child.name == 'p'
+            item.add_child(paragraph) unless paragraph.children.empty?
+            item.add_child(build_paragraph(child))
+            paragraph = xml(TEXT_P)
+          elsif HEADING_TAGS.include?(child.name)
+            item.add_child(paragraph) unless paragraph.children.empty?
+            item.add_child(build_paragraph(child, 'title'))
+            paragraph = xml(TEXT_P)
+          elsif LIST_TAGS.include?(child.name)
             item.add_child(paragraph) unless paragraph.children.empty?
             item.add_child(build_list(child))
             paragraph = xml(TEXT_P)
@@ -203,7 +225,17 @@ module ODFReport
           paragraph = xml(TEXT_P)
 
           cell.children.each do |child|
-            if LIST_TAGS.include?(child.name)
+            next if block_whitespace?(child)
+
+            if child.name == 'p'
+              table_cell.add_child(paragraph) unless paragraph.children.empty?
+              table_cell.add_child(build_paragraph(child))
+              paragraph = xml(TEXT_P)
+            elsif HEADING_TAGS.include?(child.name)
+              table_cell.add_child(paragraph) unless paragraph.children.empty?
+              table_cell.add_child(build_paragraph(child, 'title'))
+              paragraph = xml(TEXT_P)
+            elsif LIST_TAGS.include?(child.name)
               table_cell.add_child(paragraph) unless paragraph.children.empty?
               table_cell.add_child(build_list(child))
               paragraph = xml(TEXT_P)
@@ -225,6 +257,10 @@ module ODFReport
 
       def xml(name, parent = @template_node)
         Nokogiri::XML::Node.new(name, parent)
+      end
+
+      def block_whitespace?(node)
+        node.text? && node.text.strip.empty?
       end
     end
   end

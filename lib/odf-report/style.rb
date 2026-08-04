@@ -56,6 +56,12 @@ module ODFReport
       'yellow' => '#FFFF00', 'yellowgreen' => '#9ACD32'
     }.freeze
 
+    DEFAULT_BULLET_LIST_STYLE_NAME = 'OdfReportBulletList'.freeze
+    DEFAULT_NUMBERED_LIST_STYLE_NAME = 'OdfReportNumberedList'.freeze
+    LIST_MAX_LEVELS = 10
+    BULLET_CHAR = '•'.freeze
+    NUMBER_FORMAT = { 'style:num-format' => '1', 'style:num-suffix' => '.' }.freeze
+
     def initialize(doc)
       @doc = doc
       @auto_styles = doc.at_xpath('//office:automatic-styles', NS)
@@ -112,9 +118,17 @@ module ODFReport
       cached_style("Paragraph_#{Digest::MD5.hexdigest(style_element.to_s)}", family) do |style|
         styles = style_element.is_a?(String) ? parse_css(style_element) : style_element
 
-        if styles['text-align']
+        if styles['text-align'] || styles['padding-left'] || styles['margin-left'] ||
+           styles['padding-right'] || styles['margin-right']
           props = Nokogiri::XML::Node.new('style:paragraph-properties', @doc)
-          props['fo:text-align'] = styles['text-align']
+          props['fo:text-align'] = styles['text-align'] if styles['text-align']
+
+          margin_left = styles['margin-left'] || styles['padding-left']
+          props['fo:margin-left'] = convert_length(margin_left) if margin_left
+
+          margin_right = styles['margin-right'] || styles['padding-right']
+          props['fo:margin-right'] = convert_length(margin_right) if margin_right
+
           style.add_child(props)
         end
 
@@ -149,7 +163,56 @@ module ODFReport
       end
     end
 
+    def list_style(ordered)
+      name = ordered ? DEFAULT_NUMBERED_LIST_STYLE_NAME : DEFAULT_BULLET_LIST_STYLE_NAME
+      return name unless @auto_styles
+
+      existing = @auto_styles.xpath("./*[local-name()='list-style'][@style:name='#{name}']", 'style' => STYLE_NS).first
+      return name if existing
+
+      list_style_node = Nokogiri::XML::Node.new('text:list-style', @doc)
+      list_style_node['style:name'] = name
+
+      (1..LIST_MAX_LEVELS).each do |level|
+        level_style = ordered ? build_number_level_style(level) : build_bullet_level_style(level)
+        list_style_node.add_child(level_style)
+      end
+
+      @auto_styles.add_child(list_style_node)
+
+      name
+    end
+
     private
+
+    def build_bullet_level_style(level)
+      level_style = Nokogiri::XML::Node.new('text:list-level-style-bullet', @doc)
+      level_style['text:level'] = level.to_s
+      level_style['text:bullet-char'] = BULLET_CHAR
+
+      add_list_level_properties(level_style, level)
+
+      level_style
+    end
+
+    def build_number_level_style(level)
+      level_style = Nokogiri::XML::Node.new('text:list-level-style-number', @doc)
+      level_style['text:level'] = level.to_s
+      level_style['style:num-format'] = NUMBER_FORMAT['style:num-format']
+      level_style['style:num-suffix'] = NUMBER_FORMAT['style:num-suffix']
+
+      add_list_level_properties(level_style, level)
+
+      level_style
+    end
+
+    def add_list_level_properties(level_style, level)
+      props = Nokogiri::XML::Node.new('style:list-level-properties', @doc)
+      props['text:space-before'] = "#{format('%.1f', 0.75 * (level - 1))}cm"
+      props['text:min-label-width'] = '0.5cm'
+
+      level_style.add_child(props)
+    end
 
     def cached_style(name, family)
       existing = @auto_styles.at_xpath("./style:style[@style:name='#{name}']", 'style' => STYLE_NS)
@@ -176,6 +239,17 @@ module ODFReport
         props['fo:border'] = DEFAULT_BORDER
 
         style.add_child(props)
+      end
+    end
+
+    def convert_length(value)
+      return unless value
+
+      value = value.strip
+
+      # px to pt (matches the factor used for border widths)
+      value.gsub(/(\d+(?:\.\d+)?)px/) do
+        "#{(::Regexp.last_match(1).to_f * 0.75).round(2)}pt"
       end
     end
 
