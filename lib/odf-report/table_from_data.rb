@@ -28,10 +28,13 @@ module ODFReport
     end
 
     def replace!(doc)
-      return if @table_data.nil? || @table_data.empty?
-
       node = find_text_node(doc)
       return unless node
+
+      if @table_data.nil? || @table_data.empty?
+        node.replace('')
+        return
+      end
 
       @styles = Style.new(doc)
 

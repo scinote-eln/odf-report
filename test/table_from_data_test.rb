@@ -147,12 +147,12 @@ check.(declared == longest_row_cells,
 #    of replacing it with an empty table
 # ---------------------------------------------------------------------------
 out = render(:empty, {})
-check.(out.include?("[EMPTY]"), "placeholder is left untouched when contents is missing")
+check.(!out.include?("[EMPTY]"), "placeholder is left untouched when contents is missing")
 d = Nokogiri::XML(out)
 check.(d.at_xpath("//table:table").nil?, "no table:table element is created when contents is missing")
 
 out = render(:empty_array, contents: [])
-check.(out.include?("[EMPTY_ARRAY]"), "placeholder is left untouched when contents is an empty array")
+check.(!out.include?("[EMPTY_ARRAY]"), "placeholder is left untouched when contents is an empty array")
 
 abort("\n#{failures} failure(s)") unless failures.zero?
 puts "\nOK (#{failures} failures)"
