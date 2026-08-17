@@ -5,11 +5,16 @@ module ODFReport
 
       parser = Parser::Default.new(@data_source.value, node)
 
-      parser.paragraphs.each do |p|
-        node.before(p)
-      end
+      if node.name == 'span'
+        txt = node.inner_html
+        node.inner_html = txt if txt.gsub!(to_placeholder, sanitize(parser.paragraphs.map(&:inner_html).join))
+      else
+        parser.paragraphs.each do |p|
+          node.before(p)
+        end
 
-      node.remove
+        node.remove
+      end
     end
 
     private
@@ -18,8 +23,7 @@ module ODFReport
       nodes = doc.xpath(".//text:p[text()='#{to_placeholder}']")
       return nodes.first unless nodes.empty?
 
-      span = doc.xpath(".//text:p/text:span[text()='#{to_placeholder}']").first
-      span&.parent
+      doc.xpath(".//text:p/text:span[text()='#{to_placeholder}']").first
     end
   end
 end
