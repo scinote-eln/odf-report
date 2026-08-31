@@ -34,15 +34,20 @@ module ODFReport
     end
 
     def replace!(doc)
-      return unless (node = find_text_node(doc))
+      return unless (nodes = find_text_node(doc))
 
-      Array(@data_source.value).each do |item|
-        paragraph = node.dup
-        paragraph.children = entry_markup(item)
-        node.before(paragraph)
+      items = Array(@data_source.value)
+      markups = items.map { |item| entry_markup(item) }
+
+      nodes.each do |node|
+        markups.each do |markup|
+          paragraph = node.dup
+          paragraph.children = markup.dup
+          node.before(paragraph)
+        end
+
+        node.remove
       end
-
-      node.remove
     end
 
     private
