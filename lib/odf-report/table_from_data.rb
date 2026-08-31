@@ -28,17 +28,19 @@ module ODFReport
     end
 
     def replace!(doc)
-      node = find_text_node(doc)
-      return unless node
+      return unless (nodes = find_text_node(doc))
 
       if @table_data.nil? || @table_data.empty?
-        node.replace('')
+        nodes.each { |node| node.replace('') }
         return
       end
 
       @styles = Style.new(doc)
+      table = build_table(doc, @table_name)
 
-      node.replace(build_table(doc, @table_name))
+      nodes.each_with_index do |node, i|
+        node.replace(i.zero? ? table : table.dup)
+      end
     end
 
     private
@@ -77,11 +79,9 @@ module ODFReport
     end
 
     def find_text_node(doc)
-      nodes = doc.xpath(".//text:p[text()='#{to_placeholder}']")
-      return nodes.first unless nodes.empty?
-
-      span = doc.xpath(".//text:p/text:span[text()='#{to_placeholder}']").first
-      span&.parent
+      field = to_placeholder
+      doc.xpath(".//*[contains(string(.), '#{field}')
+                 and not(.//*[contains(string(.), '#{field}')])]")
     end
 
     def to_placeholder
