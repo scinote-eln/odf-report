@@ -7,7 +7,7 @@ module ODFReport
 
       if node.name == 'span'
         txt = node.inner_html
-        node.inner_html = txt if txt.gsub!(to_placeholder, sanitize(parser.paragraphs.map(&:inner_html).join))
+        node.content = txt if txt.gsub!(to_placeholder, parser.paragraphs.map(&:text).join(' '))
       else
         parser.paragraphs.each do |p|
           node.before(p)
@@ -20,10 +20,9 @@ module ODFReport
     private
 
     def find_text_node(doc)
-      nodes = doc.xpath(".//text:p[text()='#{to_placeholder}']")
-      return nodes.first unless nodes.empty?
-
-      doc.xpath(".//text:p/text:span[text()='#{to_placeholder}']").first
+      field = to_placeholder
+      doc.xpath(".//*[contains(string(.), '#{field}')
+                 and not(.//*[contains(string(.), '#{field}')])]").first
     end
   end
 end
