@@ -40,13 +40,17 @@ module ODFReport
       markups = items.map { |item| entry_markup(item) }
 
       nodes.each do |node|
-        markups.each do |markup|
-          paragraph = node.dup
-          paragraph.children = markup.dup
-          node.before(paragraph)
-        end
+        if node.children.size == 1 && node.children.first.content == to_placeholder
+          markups.each do |markup|
+            paragraph = node.dup
+            paragraph.children = markup.dup
+            node.before(paragraph)
+          end
 
-        node.remove
+          node.remove
+        else
+          replace_inline(doc, node, markups)
+        end
       end
     end
 
