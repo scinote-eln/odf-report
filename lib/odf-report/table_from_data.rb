@@ -38,12 +38,51 @@ module ODFReport
       @styles = Style.new(doc)
       table = build_table(doc, @table_name)
 
-      nodes.each_with_index do |node, i|
-        node.replace(i.zero? ? table : table.dup)
+      nodes = nodes.map { |node| node.xpath('ancestor-or-self::text:p', node.namespaces).first || node.parent }
+
+      nodes.each do |paragraph|
+        next if paragraph.nil? || paragraph.parent.nil?
+
+        children = paragraph.children
+
+        if children.size == 1 && children.first.content == to_placeholder
+          paragraph.replace(table.dup)
+        else
+          replace_inline(doc, paragraph, table)
+        end
       end
     end
 
     private
+
+    def replace_inline(doc, paragraph, table)
+      children = paragraph.children
+      placeholder = to_placeholder
+      return unless children.any? { |child| child.content.include?(placeholder) }
+
+      current_para = paragraph.dup(2)
+      children.each do |child|
+        unless child.content.include?(placeholder)
+          current_para.add_child(child.dup)
+          next
+        end
+
+        parts = child.content.split(placeholder, -1)
+        last_part = parts.pop
+
+        parts.each do |part|
+          current_para.add_child(Nokogiri::XML::Text.new(part, doc)) unless part.empty?
+          paragraph.add_previous_sibling(current_para) unless current_para.children.empty?
+          paragraph.add_previous_sibling(table.dup)
+          current_para = paragraph.dup(2)
+        end
+
+        current_para.add_child(Nokogiri::XML::Text.new(last_part, doc)) unless last_part.empty?
+      end
+
+      paragraph.add_previous_sibling(current_para) unless current_para.children.empty?
+      paragraph.remove
+    end
 
     def build_table(doc, name)
       table = Nokogiri::XML::Node.new('table:table', doc)
