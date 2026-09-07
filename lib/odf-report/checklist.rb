@@ -49,7 +49,7 @@ module ODFReport
 
           node.remove
         else
-          replace_inline(doc, node, markups)
+          replace_inline_text(doc, node, markups)
         end
       end
     end

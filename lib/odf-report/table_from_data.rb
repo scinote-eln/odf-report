@@ -12,7 +12,7 @@ module ODFReport
   #                                                         [0, 5] => {style: ";text-align:center;vertical-align:middle"}}
   #                                     table_name: 'Test table'
   #                                   })
-  class TableFromData
+  class TableFromData < Text
     DEFAULT_HEADER_CELL_STYLE = 'background-color:#f0f0f6;vertical-align:middle'.freeze
     DEFAULT_HEADER_TEXT_STYLE = 'text-align:center;font-weight:bold'.freeze
 
@@ -48,40 +48,20 @@ module ODFReport
         if children.size == 1 && children.first.content == to_placeholder
           paragraph.replace(table.dup)
         else
-          replace_inline(doc, paragraph, table)
+          replace_inline_table(doc, paragraph, table)
         end
       end
     end
 
     private
 
-    def replace_inline(doc, paragraph, table)
-      children = paragraph.children
-      placeholder = to_placeholder
-      return unless children.any? { |child| child.content.include?(placeholder) }
-
-      current_para = paragraph.dup(2)
-      children.each do |child|
-        unless child.content.include?(placeholder)
-          current_para.add_child(child.dup)
-          next
-        end
-
-        parts = child.content.split(placeholder, -1)
-        last_part = parts.pop
-
-        parts.each do |part|
-          current_para.add_child(Nokogiri::XML::Text.new(part, doc)) unless part.empty?
-          paragraph.add_previous_sibling(current_para) unless current_para.children.empty?
-          paragraph.add_previous_sibling(table.dup)
-          current_para = paragraph.dup(2)
-        end
-
-        current_para.add_child(Nokogiri::XML::Text.new(last_part, doc)) unless last_part.empty?
-      end
-
-      paragraph.add_previous_sibling(current_para) unless current_para.children.empty?
-      paragraph.remove
+    def append_part_and_flush_table(table, paragraph, accumulator, part, doc, continuation_style)
+      accumulator.add_child(Nokogiri::XML::Text.new(part, doc)) unless part.empty?
+      paragraph.add_previous_sibling(accumulator) unless accumulator.children.empty?
+      paragraph.add_previous_sibling(table.dup)
+      accumulator = paragraph.dup(2)
+      accumulator['text:style-name'] = continuation_style
+      accumulator
     end
 
     def build_table(doc, name)
