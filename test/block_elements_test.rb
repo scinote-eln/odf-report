@@ -49,7 +49,8 @@ check.(out.xpath("./text:p[4]/text:span[@text:style-name='B']").text == " tail",
 # 2) Checklist placeholder alone in a span leaves no empty paragraph behind
 out = render(%(<text:p text:style-name="P1"><text:span>[CL]</text:span></text:p>)) { |r| r.add_checklist(:cl, ITEMS) }
 check.(paragraphs(out) == ["☑ one", "☐ two"], "sole span placeholder replaced by items only")
-check.(out.xpath("./text:p").all? { |p| p["text:style-name"] == "P1" }, "checklist items keep the paragraph style")
+check.(out.xpath("./text:p").map { |p| p["text:style-name"] } == %w[P1 P1-cont],
+       "first checklist item keeps the paragraph style, the next continues it")
 
 # 3) Several paragraphs of text inside a span are kept as paragraphs
 out = render(%(<text:p><text:span>[T]</text:span></text:p>)) { |r| r.add_text(:t, "<p>a</p><p>b</p>") }
@@ -81,7 +82,28 @@ check.(out.at_xpath("./text:p[2]")["text:style-name"] == "P1-cont", "text after 
 cont = out.document.at_xpath("//style:style[@style:name='P1-cont']")
 check.(cont && cont["style:master-page-name"].nil?, "continuation style drops the master page")
 
-# 9) Chaining: a replacement may re-emit its own placeholder for the next one
+# 9) Only the first part keeps a page break / master page, the rest continue
+styles = %(<style:style style:name="PB" style:family="paragraph" style:master-page-name="MP0">) +
+         %(<style:paragraph-properties fo:break-before="page"/><style:text-properties fo:color="#ff0000"/></style:style>)
+out = render(%(<text:p text:style-name="PB">a [TB] b [TB] c</text:p>), styles) do |r|
+  r.add_table_from_data(:tb, contents: [[1]])
+end
+check.(out.xpath("./*").map { |n| n["text:style-name"] || n.name } == %w[PB table PB-cont table PB-cont],
+       "parts after the first use the continuation style (got #{out.xpath('./*').map { |n| n['text:style-name'] || n.name }.inspect})")
+cont = out.document.at_xpath("//style:style[@style:name='PB-cont']")
+check.(cont["style:master-page-name"].nil? && cont.at_xpath("./style:paragraph-properties")["fo:break-before"] == "auto",
+       "continuation style drops the master page and the page break")
+check.(cont.at_xpath("./style:text-properties")["fo:color"] == "#ff0000", "continuation style keeps the rest of the style")
+check.(cont.element_children.map(&:name) == %w[paragraph-properties text-properties], "paragraph properties come first")
+
+# 10) A common style (not in content.xml) gets a continuation style inheriting it
+out = render(%(<text:p text:style-name="Standard">a [TB] b</text:p>)) { |r| r.add_table_from_data(:tb, contents: [[1]]) }
+cont = out.document.at_xpath("//style:style[@style:name='Standard-cont']")
+check.(cont && cont["style:parent-style-name"] == "Standard" && cont["style:family"] == "paragraph" &&
+       cont.at_xpath("./style:paragraph-properties")["fo:break-before"] == "auto",
+       "continuation style of a common style is defined and inherits it")
+
+# 11) Chaining: a replacement may re-emit its own placeholder for the next one
 out = render(%(<text:p><text:span>[P]</text:span></text:p>)) do |r|
   r.add_text(:p, "<div>1. Step</div><div>[P]</div>")
   r.add_text(:p, "<div>Checklist</div><div>[P_CL]</div><div>[P]</div>")
@@ -91,7 +113,7 @@ end
 check.(paragraphs(out) == ["1. Step", "Checklist", "☑ one", "☐ two"],
        "chained replacements render as separate paragraphs (got #{paragraphs(out).inspect})")
 
-# 10) Invalid display values are rejected
+# 12) Invalid display values are rejected
 begin
   ODFReport::Text.new(name: :x, value: "", display: :inline_block)
   check.(false, "invalid display raises")

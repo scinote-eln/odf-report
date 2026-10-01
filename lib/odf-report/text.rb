@@ -95,25 +95,26 @@ module ODFReport
     end
 
     # Replaces the paragraph with its parts around each marker, and a copy of
-    # the replacement in place of each marker.
+    # the replacement in place of each marker. Only the first part keeps the
+    # paragraph's style, the ones after it continue the paragraph (see
+    # #continuation_style).
     def split_paragraph!(paragraph, replacement)
-      style_name = paragraph["text:style-name"]
+      parts = [] # [node, takes the paragraph's style]
       remainder = paragraph
 
       while find_marker(remainder)
         before, remainder = split_at_first_marker(remainder)
-        paragraph.add_previous_sibling(before) unless blank_paragraph?(before)
-
-        replacement.each do |node|
-          block = node.dup
-          block["text:style-name"] = style_name if @inherit_style && style_name
-          paragraph.add_previous_sibling(block)
-        end
+        parts << [before, true] unless blank_paragraph?(before)
+        replacement.each { |node| parts << [node.dup, @inherit_style] }
       end
+      parts << [remainder, true] unless blank_paragraph?(remainder)
 
-      unless blank_paragraph?(remainder)
-        remainder["text:style-name"] = continuation_style(paragraph.document, style_name) if style_name
-        paragraph.add_previous_sibling(remainder)
+      style_name = paragraph["text:style-name"]
+      parts.each_with_index do |(node, styled), index|
+        if styled && style_name
+          node["text:style-name"] = index.zero? ? style_name : continuation_style(paragraph.document, style_name)
+        end
+        paragraph.add_previous_sibling(node)
       end
 
       paragraph.remove
@@ -156,20 +157,32 @@ module ODFReport
         paragraph.xpath(".//*").all? { |node| INSIGNIFICANT_ELEMENTS.include?(qualified_name(node)) }
     end
 
-    # The text after a block continues the original paragraph, but must not
-    # repeat its page break or master page. Returns the continuation style
-    # name, creating the style if the base style exists.
+    # The parts after the first one continue the original paragraph, so they
+    # must not repeat its page break or master page. Returns the name of a
+    # style without them, creating it if needed: a copy of an automatic style,
+    # or a child of a common one (those live in styles.xml).
     def continuation_style(doc, base_name)
       name = "#{base_name}-cont"
       return name if doc.at_xpath("//style:style[@style:name='#{name}']")
 
-      base = doc.at_xpath("//style:style[@style:name='#{base_name}']")
-      return name unless base
+      automatic_styles = doc.at_xpath("//office:automatic-styles")
+      return base_name unless automatic_styles
 
-      clone = base.dup(1)
-      clone["style:name"] = name
-      clone.remove_attribute("master-page-name")
-      base.add_next_sibling(clone)
+      base = automatic_styles.at_xpath("./style:style[@style:name='#{base_name}']")
+      if base
+        style = base.add_next_sibling(base.dup(1))
+        style.remove_attribute("master-page-name")
+      else
+        style = automatic_styles.add_child(Nokogiri::XML::Node.new("style:style", doc))
+        style["style:family"] = "paragraph"
+        style["style:parent-style-name"] = base_name
+      end
+      style["style:name"] = name
+
+      properties = style.at_xpath("./style:paragraph-properties") ||
+                   style.prepend_child(Nokogiri::XML::Node.new("style:paragraph-properties", doc))
+      properties["fo:break-before"] = "auto"
+      properties.remove_attribute("page-number")
 
       name
     end
