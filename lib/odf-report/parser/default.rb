@@ -46,13 +46,11 @@ module ODFReport
       TABLE_TABLE_CELL = 'table:table-cell'.freeze
       TABLE_STYLE_NAME = 'table:style-name'.freeze
 
-      XML_ESCAPE = { "&" => "&amp;", "<" => "&lt;", ">" => "&gt;" }.freeze
-
       def initialize(text, template_node)
         @text = text
         @paragraphs = []
         @template_node = template_node
-        @style = Style.new(template_node)
+        @styles = Style.new(template_node)
 
         parse
       end
@@ -66,7 +64,7 @@ module ODFReport
 
       def inherited_css(node, css = {})
         css = css.dup
-        css.merge(node['style'] ? @style.parse_css(node['style']) : {})
+        css.merge(node['style'] ? @styles.parse_css(node['style']) : {})
            .merge(SEMANTIC_STYLES.fetch(node.name, {}))
       end
 
@@ -75,36 +73,57 @@ module ODFReport
       # into, preserving the behaviour where nested paragraphs were picked up.
       def process(nodes)
         nodes.each do |node|
-          case node.name
-          when "p"
-            add_paragraph(node)
-          when *HEADING_TAGS
-            add_paragraph(node, 'title')
-          when "ul", "ol"
-            @paragraphs << build_list(node)
-          when 'table'
-            @paragraphs << build_table(node)
-          when "text"
-            unless node.text.strip.empty?
-              paragraph = xml(TEXT_P)
-              paragraph.content = node.text
-              @paragraphs << paragraph
-            end
-          else
-            process(node.children) if node.element?
+          if (block = build_block(node, tables: true))
+            @paragraphs << block
+          elsif node.text?
+            next if node.text.strip.empty?
+
+            paragraph = xml(TEXT_P)
+            paragraph.content = node.text
+            @paragraphs << paragraph
+          elsif node.element?
+            process(node.children)
           end
         end
       end
 
-      def add_paragraph(node, style = nil)
-        @paragraphs << build_paragraph(node, style)
+      # Builds the ODF node for a block-level HTML element, nil for anything
+      # else. ODF allows tables in table cells, but not in list items.
+      def build_block(node, tables:)
+        case node.name
+        when "p" then build_paragraph(node)
+        when *HEADING_TAGS then build_paragraph(node, "title")
+        when *LIST_TAGS then build_list(node)
+        when "table" then build_table(node) if tables
+        end
+      end
+
+      # Fills a list item or table cell with the HTML children: blocks are
+      # added as they are, runs of inline content are wrapped in paragraphs.
+      def append_flow(container, children, tables: false)
+        paragraph = xml(TEXT_P)
+
+        children.each do |child|
+          next if block_whitespace?(child)
+
+          if (block = build_block(child, tables: tables))
+            container.add_child(paragraph) unless paragraph.children.empty?
+            container.add_child(block)
+            paragraph = xml(TEXT_P)
+          else
+            render_inline(child, paragraph)
+          end
+        end
+
+        container.add_child(paragraph) unless paragraph.children.empty?
+        container
       end
 
       def build_paragraph(node, style = nil)
         paragraph = xml(TEXT_P)
 
-        css = node['style'] ? @style.parse_css(node['style']) : {}
-        style_name = style || (css.empty? ? nil : @style.text_style(css, 'paragraph'))
+        css = node['style'] ? @styles.parse_css(node['style']) : {}
+        style_name = style || (css.empty? ? nil : @styles.text_style(css, 'paragraph'))
         paragraph[TEXT_STYLE_NAME] = style_name if style_name
 
         render_inline(node, paragraph)
@@ -139,7 +158,7 @@ module ODFReport
 
         span = xml(TEXT_SPAN)
         span_css = css.reject { |key, _| BLOCK_LEVEL_CSS_KEYS.include?(key) }
-        style = span_css.empty? ? nil : @style.text_style(span_css, 'text')
+        style = span_css.empty? ? nil : @styles.text_style(span_css, 'text')
         span[TEXT_STYLE_NAME] = style if style
         span.content = text.delete("\n")
         parent.add_child(span)
@@ -149,7 +168,7 @@ module ODFReport
         ordered = node.name == 'ol'
 
         list = xml(TEXT_LIST)
-        list[TEXT_STYLE_NAME] = @style.list_style(ordered)
+        list[TEXT_STYLE_NAME] = @styles.list_style(ordered)
 
         node.children
             .select { |child| child.name == 'li' }
@@ -161,32 +180,7 @@ module ODFReport
       end
 
       def build_list_item(li)
-        item = xml(TEXT_LIST_ITEM)
-        paragraph = xml(TEXT_P)
-
-        li.children.each do |child|
-          next if block_whitespace?(child)
-
-          if child.name == 'p'
-            item.add_child(paragraph) unless paragraph.children.empty?
-            item.add_child(build_paragraph(child))
-            paragraph = xml(TEXT_P)
-          elsif HEADING_TAGS.include?(child.name)
-            item.add_child(paragraph) unless paragraph.children.empty?
-            item.add_child(build_paragraph(child, 'title'))
-            paragraph = xml(TEXT_P)
-          elsif LIST_TAGS.include?(child.name)
-            item.add_child(paragraph) unless paragraph.children.empty?
-            item.add_child(build_list(child))
-            paragraph = xml(TEXT_P)
-          else
-            render_inline(child, paragraph)
-          end
-        end
-
-        item.add_child(paragraph) unless paragraph.children.empty?
-
-        item
+        append_flow(xml(TEXT_LIST_ITEM), li.children)
       end
 
       def build_table(node)
@@ -220,36 +214,9 @@ module ODFReport
 
         row.children.select { |cell| %w[td th].include?(cell.name) }.each do |cell|
           table_cell = xml(TABLE_TABLE_CELL)
-          table_cell[TABLE_STYLE_NAME] = @style.cell_style(inherited_css(cell))
+          table_cell[TABLE_STYLE_NAME] = @styles.cell_style(inherited_css(cell))
 
-          paragraph = xml(TEXT_P)
-
-          cell.children.each do |child|
-            next if block_whitespace?(child)
-
-            if child.name == 'p'
-              table_cell.add_child(paragraph) unless paragraph.children.empty?
-              table_cell.add_child(build_paragraph(child))
-              paragraph = xml(TEXT_P)
-            elsif HEADING_TAGS.include?(child.name)
-              table_cell.add_child(paragraph) unless paragraph.children.empty?
-              table_cell.add_child(build_paragraph(child, 'title'))
-              paragraph = xml(TEXT_P)
-            elsif LIST_TAGS.include?(child.name)
-              table_cell.add_child(paragraph) unless paragraph.children.empty?
-              table_cell.add_child(build_list(child))
-              paragraph = xml(TEXT_P)
-            elsif child.name == 'table'
-              table_cell.add_child(paragraph) unless paragraph.children.empty?
-              table_cell.add_child(build_table(child))
-              paragraph = xml(TEXT_P)
-            else
-              render_inline(child, paragraph)
-            end
-          end
-
-          table_cell.add_child(paragraph) unless paragraph.children.empty?
-          table_row.add_child(table_cell)
+          table_row.add_child(append_flow(table_cell, cell.children, tables: true))
         end
 
         table_row

@@ -4,8 +4,10 @@ module ODFReport
       fields << Field.new({name: name, value: value}, &block)
     end
 
-    def add_text(name, value = nil, &block)
-      texts << Text.new({name: name, value: value}, &block)
+    # display: :auto renders a single paragraph inline and anything else as
+    # blocks, :block always renders blocks (see Text).
+    def add_text(name, value = nil, display: :auto, &block)
+      texts << Text.new({name: name, value: value, display: display}, &block)
     end
 
     def add_checklist(name, items, opts = {})
@@ -32,10 +34,7 @@ module ODFReport
     end
 
     def add_table_from_data(name, collection, opts = {})
-      opts[:name] = name
-      opts[:value] = collection
-
-      tables_from_data << TableFromData.new(opts)
+      texts << TableFromData.new(opts.merge(name: name, value: collection))
     end
 
     def add_section(section_name, collection, opts = {})
@@ -63,7 +62,5 @@ module ODFReport
     def sections = @sections ||= []
 
     def images = @images ||= []
-
-    def tables_from_data = @tables_from_data ||= []
   end
 end

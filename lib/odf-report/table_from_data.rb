@@ -1,67 +1,39 @@
 module ODFReport
-  # Renders table with data and style into placeholder.
-  # report.add_table_from_data(:table {
-  #                                     contents: [[1, 2, 4], ['res', '2', 1]],
-  #                                     columns_title: ["A", "test", "C"]
-  #                                     rows_title: [1, 2, 3]
-  #                                     cells_attributes:  {[0, 0] => {style: ";text-align:center;vertical-align:middle"},
-  #                                                         [0, 1] => {style: ";text-align:center;vertical-align:middle"},
-  #                                                         [0, 2] => {style: ";text-align:center;vertical-align:middle"},
-  #                                                         [0, 3] => {style: ";text-align:center;vertical-align:middle"},
-  #                                                         [0, 4] => {style: ";text-align:center;vertical-align:middle"},
-  #                                                         [0, 5] => {style: ";text-align:center;vertical-align:middle"}}
-  #                                     table_name: 'Test table'
-  #                                   })
+  # Renders a table built from data into a placeholder. It is always rendered
+  # as a block (see Text), splitting the paragraph when the placeholder sits
+  # inside other text.
+  #
+  #   report.add_table_from_data(:table, {
+  #     contents: [[1, 2, 4], ['res', '2', 1]],
+  #     columns_title: ['A', 'test', 'C'],
+  #     rows_title: [1, 2],
+  #     cells_attributes: { [0, 0] => { style: 'text-align:center;vertical-align:middle' },
+  #                         [1, 2] => { style: 'background-color:#f0f0f6' } },
+  #     table_name: 'Test table'
+  #   })
+  #
+  # Without contents the placeholder is removed.
   class TableFromData < Text
-    DEFAULT_HEADER_CELL_STYLE = 'background-color:#f0f0f6;vertical-align:middle'.freeze
-    DEFAULT_HEADER_TEXT_STYLE = 'text-align:center;font-weight:bold'.freeze
+    HEADER_CELL_CSS = 'background-color:#f0f0f6;vertical-align:middle'.freeze
+    HEADER_TEXT_CSS = 'text-align:center;font-weight:bold'.freeze
 
     def initialize(opts)
-      @name = opts[:name]
-      data_source = opts[:value] || {}
-
-      @table_data = data_source[:contents] || []
-      @columns_title = data_source[:columns_title]
-      @rows_title = data_source[:rows_title]
-      @cells_attributes = data_source[:cells_attributes] || {}
-      @table_name = data_source[:table_name]
-    end
-
-    def replace!(doc)
-      return unless (nodes = find_text_node(doc))
-
-      if @table_data.nil? || @table_data.empty?
-        nodes.each { |node| node.replace('') }
-        return
-      end
-
-      @styles = Style.new(doc)
-      table = build_table(doc, @table_name)
-
-      nodes = nodes.map { |node| node.xpath('ancestor-or-self::text:p', node.namespaces).first || node.parent }
-
-      nodes.each do |paragraph|
-        next if paragraph.nil? || paragraph.parent.nil?
-
-        children = paragraph.children
-
-        if children.size == 1 && children.first.content == to_placeholder
-          paragraph.replace(table.dup)
-        else
-          replace_inline_table(doc, paragraph, table)
-        end
-      end
+      super(opts.merge(display: :block))
     end
 
     private
 
-    def append_part_and_flush_table(table, paragraph, accumulator, part, doc, continuation_style)
-      accumulator.add_child(Nokogiri::XML::Text.new(part, doc)) unless part.empty?
-      paragraph.add_previous_sibling(accumulator) unless accumulator.children.empty?
-      paragraph.add_previous_sibling(table.dup)
-      accumulator = paragraph.dup(2)
-      accumulator['text:style-name'] = continuation_style
-      accumulator
+    def replacement_nodes(doc)
+      data = @data_source.value || {}
+      @contents = data[:contents]
+      return [] if @contents.nil? || @contents.empty?
+
+      @columns_title = data[:columns_title]
+      @rows_title = data[:rows_title]
+      @cells_attributes = data[:cells_attributes] || {}
+      @styles = Style.new(doc)
+
+      [build_table(doc, data[:table_name])]
     end
 
     def build_table(doc, name)
@@ -69,15 +41,19 @@ module ODFReport
       table['table:name'] = name.to_s
 
       add_columns(doc, table)
-      add_header_row(doc, table)
-      add_rows(doc, table)
+
+      # The header row gets an empty corner cell above the row titles.
+      append_row(doc, table, @columns_title, @rows_title && '') if @columns_title
+
+      @contents.each_with_index do |row, row_index|
+        append_row(doc, table, row, @rows_title&.[](row_index), row_index)
+      end
 
       table
     end
 
     def add_columns(doc, table)
-      columns_count = [@table_data.map(&:length).max, @rows_title&.length].compact.max.to_i
-
+      columns_count = [@contents.map(&:length).max, @columns_title&.length].compact.max.to_i
       return if columns_count.zero?
 
       column = Nokogiri::XML::Node.new('table:table-column', doc)
@@ -85,73 +61,33 @@ module ODFReport
       table.add_child(column)
     end
 
-    def add_header_row(doc, table)
-      return unless @columns_title
-
-      append_row(doc, table, @columns_title, @rows_title ? '' : nil, header: true)
-    end
-
-    def add_rows(doc, table)
-      @table_data.each_with_index do |row, row_index|
-        append_row(doc, table, row, @rows_title&.[](row_index), row_index)
-      end
-    end
-
-    def find_text_node(doc)
-      field = to_placeholder
-      doc.xpath(".//*[contains(string(.), '#{field}')
-                 and not(.//*[contains(string(.), '#{field}')])]")
-    end
-
-    def to_placeholder
-      open, close = ODFReport.delimiters
-      "#{open}#{@name.to_s.upcase}#{close}"
-    end
-
-    def append_row(doc, table, row, title, row_index = nil, header: false)
+    # Rows without a row_index are header rows. Title cells are styled as
+    # headers, data cells use their cells_attributes style for both the cell
+    # and its paragraph.
+    def append_row(doc, table, values, title, row_index = nil)
       table_row = Nokogiri::XML::Node.new('table:table-row', doc)
 
-      if title
-        append_cell(doc, table_row, title, @styles.cell_style(DEFAULT_HEADER_CELL_STYLE),
-                    @styles.text_style(DEFAULT_HEADER_TEXT_STYLE))
-      end
+      append_cell(doc, table_row, title, HEADER_CELL_CSS, HEADER_TEXT_CSS) if title
 
-      row.each_with_index do |value, column_index|
-        if header
-          cell_style = @styles.cell_style(DEFAULT_HEADER_CELL_STYLE)
-          paragraph_style = @styles.text_style(DEFAULT_HEADER_TEXT_STYLE)
+      values.each_with_index do |value, column_index|
+        if row_index
+          css = @cells_attributes.dig([row_index, column_index], :style)
+          append_cell(doc, table_row, value, css, css)
         else
-          cell_style = cell_style(row_index, column_index)
-          paragraph_style = paragraph_style(row_index, column_index)
+          append_cell(doc, table_row, value, HEADER_CELL_CSS, HEADER_TEXT_CSS)
         end
-
-        append_cell(doc, table_row, value, cell_style, paragraph_style)
       end
 
       table.add_child(table_row)
     end
 
-    def cell_style(row_index, column_index)
-      return Style::DEFAULT_CELL_STYLE_NAME if row_index.nil? || column_index.nil?
-
-      style = @cells_attributes&.dig([row_index, column_index], :style)
-      style ? @styles.cell_style(style) : Style::DEFAULT_CELL_STYLE_NAME
-    end
-
-    def paragraph_style(row_index, column_index)
-      return nil if row_index.nil? || column_index.nil?
-
-      style = @cells_attributes&.dig([row_index, column_index], :style)
-
-      style ? @styles.text_style(style) : nil
-    end
-
-    def append_cell(doc, table_row, value, cell_style_name, paragraph_style_name)
+    def append_cell(doc, table_row, value, cell_css, text_css)
       cell = Nokogiri::XML::Node.new('table:table-cell', doc)
-      cell['table:style-name'] = cell_style_name if cell_style_name
+      cell['table:style-name'] = @styles.cell_style(cell_css)
 
       paragraph = Nokogiri::XML::Node.new('text:p', doc)
-      paragraph['text:style-name'] = paragraph_style_name if paragraph_style_name
+      text_style = @styles.text_style(text_css)
+      paragraph['text:style-name'] = text_style if text_style
       paragraph.content = value.to_s
 
       cell.add_child(paragraph)

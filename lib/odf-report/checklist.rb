@@ -12,6 +12,9 @@ module ODFReport
   # (☑ when checked, ☐ otherwise). Items are rendered as paragraphs rather
   # than an ODF list on purpose: a text:list would also draw the default list
   # bullet next to the glyph. The checkbox glyph is the marker here.
+  # A checklist is always rendered as blocks (see Text), even when its
+  # placeholder sits inside a span or next to other text, and its items keep
+  # the style of the placeholder's paragraph.
   #
   # Items may be:
   #   - a Hash with :text / :checked (string keys also accepted)
@@ -30,39 +33,27 @@ module ODFReport
     def initialize(opts, &block)
       @checked_symbol   = opts[:checked_symbol]   || DEFAULT_CHECKED
       @unchecked_symbol = opts[:unchecked_symbol] || DEFAULT_UNCHECKED
-      super
-    end
-
-    def replace!(doc)
-      return unless (nodes = find_text_node(doc))
-
-      items = Array(@data_source.value)
-      markups = items.map { |item| entry_markup(item) }
-
-      nodes.each do |node|
-        if node.children.size == 1 && node.children.first.content == to_placeholder
-          markups.each do |markup|
-            paragraph = node.dup
-            paragraph.children = markup.dup
-            node.before(paragraph)
-          end
-
-          node.remove
-        else
-          replace_inline_text(doc, node, markups)
-        end
-      end
+      super(opts.merge(display: :block, inherit_style: true), &block)
     end
 
     private
 
-    # One paragraph's inner markup: "<glyph> <escaped text>". Reusing the
-    # placeholder paragraph (node.dup) keeps the surrounding paragraph style.
-    def entry_markup(item)
+    def replacement_nodes(doc)
+      Array(@data_source.value).map { |item| entry_paragraph(doc, item) }
+    end
+
+    # One paragraph per item: "<glyph> <text>", newlines become line breaks.
+    def entry_paragraph(doc, item)
       checked, text = normalize(item)
       symbol = checked ? @checked_symbol : @unchecked_symbol
+      paragraph = Nokogiri::XML::Node.new("text:p", doc)
 
-      "#{html_escape(symbol)} #{sanitize(text)}"
+      "#{symbol} #{text}".split("\n", -1).each_with_index do |line, index|
+        paragraph.add_child(Nokogiri::XML::Node.new("text:line-break", doc)) if index.positive?
+        paragraph.add_child(Nokogiri::XML::Text.new(line, doc)) unless line.empty?
+      end
+
+      paragraph
     end
 
     def normalize(item)
