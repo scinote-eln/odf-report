@@ -10,6 +10,8 @@ module ODFReport
     #                                       bullet or numbered list styling
     #   - <strong>/<b>, <em>/<i>, <u>    -> styled text:span
     #   - <br>                           -> text:line-break
+    #   - <table>                        -> table:table (thead/tbody/tfoot rows,
+    #                                       always with a table:table-column)
     #
     # Any other element is unwrapped: its tags are dropped and its text kept.
     # This guarantees only ODF elements end up in content.xml — foreign HTML
@@ -21,6 +23,8 @@ module ODFReport
 
       LIST_TAGS = %w[ul ol].freeze
       HEADING_TAGS = %w[h1 h2 h3 h4 h5 h6].freeze
+      TABLE_SECTION_TAGS = %w[thead tbody tfoot].freeze
+      TABLE_CELL_TAGS = %w[td th].freeze
       BLOCK_LEVEL_CSS_KEYS = %w[
         text-align margin-left margin-right padding-left padding-right
         margin-top margin-bottom padding-top padding-bottom
@@ -185,34 +189,49 @@ module ODFReport
 
       def build_table(node)
         table = xml(TABLE_TABLE)
+        rows = table_rows(node)
 
-        node.children.each do |child|
-          case child.name
-          when 'colgroup'
-            add_columns(table, child)
-          when 'tbody'
-            child.children
-                 .select { |row| row.name == 'tr' }
-                 .each do |row|
-                   table.add_child(build_table_row(row))
-                 end
-          end
-        end
+        # ODF requires at least one table:table-column before the rows
+        column = xml(TABLE_TABLE_COLUMN)
+        column['table:number-columns-repeated'] = column_count(node, rows).to_s
+        table.add_child(column)
+
+        rows.each { |row| table.add_child(build_table_row(row)) }
 
         table
       end
 
-      def add_columns(table, colgroup)
-        column = xml(TABLE_TABLE_COLUMN)
-        column['table:number-columns-repeated'] = colgroup.children.count { |c| c.name == 'col' }
+      def table_rows(node)
+        node.children.flat_map do |child|
+          case child.name
+          when *TABLE_SECTION_TAGS then child.children.select { |row| row.name == 'tr' }
+          when 'tr' then [child]
+          else []
+          end
+        end
+      end
 
-        table.add_child(column)
+      # Uses <colgroup> when present, otherwise the widest row (honouring colspan).
+      def column_count(node, rows)
+        colgroup = node.children.find { |child| child.name == 'colgroup' }
+        from_cols = colgroup ? colgroup.children.count { |col| col.name == 'col' } : 0
+        return from_cols if from_cols.positive?
+
+        from_rows = rows.map do |row|
+          table_cells(row).sum { |cell| [cell['colspan'].to_i, 1].max }
+        end.max.to_i
+
+        [from_rows, 1].max
+      end
+
+      def table_cells(row)
+        row.children.select { |cell| TABLE_CELL_TAGS.include?(cell.name) }
       end
 
       def build_table_row(row)
         table_row = xml(TABLE_TABLE_ROW)
 
-        row.children.select { |cell| %w[td th].include?(cell.name) }.each do |cell|
+        table_cells(row).each do |cell|
           table_cell = xml(TABLE_TABLE_CELL)
           table_cell[TABLE_STYLE_NAME] = @styles.cell_style(inherited_css(cell))
 

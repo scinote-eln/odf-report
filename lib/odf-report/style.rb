@@ -29,7 +29,8 @@ module ODFReport
       'border-left' => 'fo:border-left'
     }.freeze
     PARAGRAPH_CSS_KEYS = %w[text-align margin-left margin-right padding-left padding-right].freeze
-    TEXT_CSS_KEYS = %w[font-weight font-size font-style color background-color text-decoration text-properties].freeze
+    TEXT_CSS_KEYS = %w[font-weight font-size font-style color background-color
+                       background text-decoration text-properties].freeze
     PX_TO_PT = 0.75
 
     def initialize(doc)
@@ -56,7 +57,9 @@ module ODFReport
         css = parse_css(css) if css.is_a?(String)
 
         props = Nokogiri::XML::Node.new('style:table-cell-properties', @doc)
-        props['fo:background-color'] = normalized_hex_color(css['background-color']) if css['background-color']
+        if (bg = background_color(css))
+          props['fo:background-color'] = normalized_hex_color(bg)
+        end
 
         BORDERS.each do |css_border, odf_border|
           props[odf_border] = convert_border(css[css_border]) if css[css_border]
@@ -121,7 +124,10 @@ module ODFReport
       props['fo:font-size'] = css['font-size'] if css['font-size']
       props['fo:font-style'] = css['font-style'] if css['font-style']
       props['fo:color'] = normalized_hex_color(css['color']) if css['color']
-      props['fo:background-color'] = normalized_hex_color(css['background-color']) if css['background-color']
+
+      if (bg = background_color(css))
+        props['fo:background-color'] = normalized_hex_color(bg)
+      end
 
       case css['text-decoration']
       when 'underline'
@@ -141,6 +147,12 @@ module ODFReport
       end
 
       props
+    end
+
+    def background_color(css)
+      return css['background-color'] if css['background-color']
+
+      css['background']
     end
 
     def build_bullet_level_style(level)
